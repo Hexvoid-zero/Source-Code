@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Source Code IDE</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- title bar -->
+    <header class="titlebar">
+      <div class="tb-left">
+        <div class="logo">◆</div>
+        <nav class="menus" id="menus">
+          <div class="menu" data-menu="File">File</div>
+          <div class="menu" data-menu="Edit">Edit</div>
+          <div class="menu" data-menu="Selection">Selection</div>
+          <div class="menu" data-menu="View">View</div>
+          <div class="menu" data-menu="Go">Go</div>
+          <div class="menu" data-menu="Run">Run</div>
+          <div class="menu" data-menu="Terminal">Terminal</div>
+          <div class="menu" data-menu="Help">Help</div>
+        </nav>
+      </div>
+      <div class="tb-title" id="winTitle">Source Code IDE</div>
+      <div class="tb-right">
+        <span class="tb-ico text-svg" title="Toggle panel"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg></span>
+        <span class="tb-ico text-svg" id="tbSettings" title="Settings"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>
+        <span class="tb-ico text-svg" title="Account"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+        <div class="winctl"><span class="min"></span><span class="max"></span><span class="cls"></span></div>
+      </div>
+    </header>
+
+    <div class="body">
+      <!-- AGENT (left) -->
+      <aside class="agent" id="agentPanel">
+        <div class="pane-head">
+          <span class="pane-title">Agent</span>
+          <span class="pane-actions">
+            <button id="agentNew" title="New conversation"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+            <button title="History"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/><line x1="12" y1="7" x2="12" y2="12"/><line x1="12" y1="12" x2="16" y2="14"/></svg></button>
+            <button title="More"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
+          </span>
+        </div>
+        <div class="agent-log" id="agentLog"></div>
+        <div class="agent-dock">
+          <div class="dock-card">
+            <div class="dock-project" id="dockProject">workspace</div>
+            <textarea id="agentText" rows="2" placeholder="Ask anything, @ to mention, / for actions"></textarea>
+            <div class="dock-row">
+              <button class="dock-add" id="agentAttach" title="Attach">＋</button>
+              <select id="modelSelect" class="model-select"></select>
+              <span class="dock-status" id="llmChip">●</span>
+              <button class="dock-mic" title="Voice">🎙</button>
+              <button class="dock-send" id="agentSend" title="Send">↑</button>
+            </div>
+          </div>
+          <div class="dock-foot">AI may make mistakes. Double-check all generated code.</div>
+        </div>
+      </aside>
+
+      <!-- EDITOR (center) -->
+      <main class="editor-wrap">
+        <div class="tabs" id="tabs"></div>
+        <div class="breadcrumb" id="breadcrumb"></div>
+        <div id="editor"></div>
+        <div class="welcome" id="welcome">
+          <div class="welcome-inner">
+            <div class="welcome-logo">◆</div>
+            <h1>Source Code IDE</h1>
+            <p>Open a folder on this machine, or upload one from anywhere, to start editing.</p>
+            <div class="welcome-actions">
+              <button id="welcomeOpen">Open Folder…</button>
+              <button id="welcomeUpload" class="primary">Upload Folder…</button>
+            </div>
+          </div>
+        </div>
+        <div class="terminal" id="terminal" hidden>
+          <div class="terminal-head">
+            <span class="tt active">TERMINAL</span>
+            <button id="termClose" title="Close"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+          </div>
+          <div class="terminal-out" id="termOut"></div>
+          <div class="terminal-input">
+            <span class="prompt">›</span>
+            <input id="termCmd" placeholder="run a command in the open folder…" />
+          </div>
+        </div>
+      </main>
+
+      <!-- EXPLORER (right) -->
+      <aside class="explorer" id="explorerPanel">
+        <div class="pane-head">
+          <span class="pane-title">Explorer</span>
+          <span class="pane-actions">
+            <button id="newFileBtn" title="New File"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+            <button id="refreshBtn" title="Refresh"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+            <button title="More"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
+          </span>
+        </div>
+        <div class="project-row" id="projectRow">
+          <span class="chev">▾</span><span id="projectName">No folder open</span>
+        </div>
+        <div class="tree" id="tree"></div>
+        <div class="explorer-foot">
+          <div class="foot-row"><span class="chev">▸</span> Outline</div>
+          <div class="foot-row"><span class="chev">▸</span> Timeline</div>
+        </div>
+      </aside>
+
+      <!-- ACTIVITY BAR (far right) -->
+      <nav class="activity">
+        <button class="act active" data-toggle="explorer" title="Explorer">
+          <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+        </button>
+        <button class="act" data-toggle="agent" title="Agent">
+          <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3c.132 4.132 1.868 5.868 6 6-.132 4.132-1.868 5.868-6 6-.132-4.132-1.868-5.868-6-6 .132-4.132 1.868-5.868 6-6z M5 16c.066 2.066.934 2.934 3 3-.066 2.066-.934 2.934-3 3-.066-2.066-.934-2.934-3-3 .066-2.066.934-2.934 3-3z"/></svg>
+        </button>
+        <button class="act sc" id="scAct" title="Source Control">
+          <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 15V9a4 4 0 0 0-4-4H9"/><line x1="6" y1="9" x2="6" y2="15"/></svg>
+          <span class="sc-badge" id="scBadge" hidden>0</span>
+        </button>
+        <button class="act" data-toggle="terminal" title="Terminal">
+          <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        </button>
+        <button class="act" id="uploadAct" title="Upload Folder">
+          <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </button>
+        <span class="act-spacer"></span>
+        <button class="act" id="settingsAct" title="Settings">
+          <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </nav>
+    </div>
+
+    <!-- status bar -->
+    <footer class="statusbar">
+      <span class="st-item" id="stBranch">⑂ —</span>
+      <span class="st-item" id="stProblems">⊘ 0  ⚠ 0</span>
+      <span class="spacer"></span>
+      <span class="st-item" id="stPos">Ln 1, Col 1</span>
+      <span class="st-item" id="stLang">plaintext</span>
+      <span class="st-item">UTF-8</span>
+      <span class="st-item" id="stModel">LLM —</span>
+    </footer>
+  </div>
+
+  <div class="dropdown" id="dropdown" hidden></div>
+
+  <div class="modal" id="folderModal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">Open Folder</div>
+      <div class="modal-path" id="folderPath"></div>
+      <div class="modal-list" id="folderList"></div>
+      <div class="modal-foot">
+        <button id="folderUp">⬆ Up</button>
+        <span class="spacer"></span>
+        <button id="folderCancel">Cancel</button>
+        <button id="folderOpen" class="primary">Open this folder</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+  <input type="file" id="folderUpload" webkitdirectory directory multiple hidden />
+
+  <script>
+    var require = { paths: { vs: 'vs' } };
+    self.MonacoEnvironment = {
+      getWorkerUrl: function () {
+        return 'data:text/javascript;charset=utf-8,' + encodeURIComponent(
+          "self.MonacoEnvironment={baseUrl:'" + location.origin + "/'};" +
+          "importScripts('" + location.origin + "/vs/base/worker/workerMain.js');"
+        );
+      }
+    };
+  </script>
+  <script src="vs/loader.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

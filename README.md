@@ -1,3 +1,4 @@
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/f96e6bd5-02ec-4127-9a8a-5bca06d62ff1" />
 # Source Code IDE
 
 A standalone, VS Code / Antigravity-style coding IDE with a built-in AI coding agent.

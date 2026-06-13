@@ -1,5 +1,5 @@
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/f96e6bd5-02ec-4127-9a8a-5bca06d62ff1" />
-# Source Code IDE
+Source Code IDE
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/17be792b-cdea-4d1d-8725-9cda9e1d514c" />
 
 A standalone, VS Code / Antigravity-style coding IDE with a built-in AI coding agent.
 Part of the SourceMind project, but ships as its own program and its own `.exe`.

@@ -104,12 +104,12 @@ def main():
                 server = uvicorn.Server(config)
                 threading.Thread(target=server.run, daemon=True).start()
 
-                for _ in range(200):
+                for _ in range(300):
                     try:
-                        if httpx.get(url + "/api/health", timeout=0.5).status_code == 200:
+                        if httpx.get(url + "/api/ping", timeout=1.0).status_code == 200:
                             break
                     except Exception:
-                        time.sleep(0.15)
+                        time.sleep(0.05)
 
                 print(f"Source Code IDE — {url}  (open folder: {os.environ['IDE_ROOT']})")
                 window.load_url(url)
@@ -128,12 +128,12 @@ def main():
         server = uvicorn.Server(config)
         threading.Thread(target=server.run, daemon=True).start()
 
-        for _ in range(200):
+        for _ in range(300):
             try:
-                if httpx.get(url + "/api/health", timeout=0.5).status_code == 200:
+                if httpx.get(url + "/api/ping", timeout=1.0).status_code == 200:
                     break
             except Exception:
-                time.sleep(0.15)
+                time.sleep(0.05)
 
         import webbrowser
         print(f"Native window unavailable ({e}); opening in browser. Close this window to stop.")

@@ -42,7 +42,10 @@ else:
     STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 # current open folder (server-side root for all file ops)
-_state = {"root": Path(os.getenv("IDE_ROOT", "") or Path.home()).resolve()}
+_state = {
+    "root": Path(os.getenv("IDE_ROOT", "") or Path.home()).resolve(),
+    "active_model": None
+}
 WORKSPACES = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "SourceCodeIDE" / "workspaces"
 
 
@@ -91,6 +94,9 @@ def list_models() -> list[dict]:
 
 
 def resolve_model() -> str | None:
+    active = _state.get("active_model")
+    if active:
+        return active
     models = list_models()
     names = {m["name"] for m in models}
     if OLLAMA_MODEL and (OLLAMA_MODEL in names or f"{OLLAMA_MODEL}:latest" in names):
@@ -147,6 +153,11 @@ class ApplyIn(BaseModel):
 
 
 # ----------------------------------------------------------------------------- workspace
+@app.get("/api/ping")
+def ping():
+    return {"ok": True}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "llm": llm_available(), "model": resolve_model(), "root": str(root())}
@@ -155,6 +166,16 @@ def health():
 @app.get("/api/models")
 def models():
     return {"models": list_models(), "active": resolve_model()}
+
+
+class ActiveModelIn(BaseModel):
+    name: str
+
+
+@app.post("/api/models/active")
+def set_active_model(body: ActiveModelIn):
+    _state["active_model"] = body.name
+    return {"ok": True, "active": _state["active_model"]}
 
 
 @app.get("/api/root")
@@ -341,9 +362,11 @@ def run_command(body: RunIn):
 AGENT_SYSTEM = """You are a coding agent inside an IDE, working in the open folder.
 Reply with ONE JSON object and nothing else.
 Read a file: {{"action":"read","path":"relative/path"}}
+Write a file: {{"action":"write","path":"relative/path","content":"COMPLETE new file content"}}
+Run a command: {{"action":"shell","command":"python hello.py"}}
 Finish: {{"action":"finish","message":"<short>","edits":[{{"path":"relative/path","content":"<COMPLETE new file content>"}}]}}
 For a question with no change, finish with "edits":[].
-Rules: paths are relative to the open folder; for edits return the ENTIRE new file content; read a file before editing it.
+Rules: paths are relative to the open folder; you should read a file before editing it; you can run shell commands to compile, test, or verify.
 Files in the open folder:
 {tree}"""
 
@@ -362,14 +385,85 @@ def _full_tree(limit: int = 400) -> list[str]:
     return out
 
 
+def _unescape_val(val):
+    if isinstance(val, str):
+        return val.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
+    elif isinstance(val, list):
+        return [_unescape_val(x) for x in val]
+    elif isinstance(val, dict):
+        return {k: _unescape_val(v) for k, v in val.items()}
+    return val
+
+
 def _parse(raw: str):
     m = re.search(r"\{.*\}", raw, re.DOTALL)
     if not m:
         return None
+    content_str = m.group(0)
     try:
-        return json.loads(m.group(0))
+        obj = json.loads(content_str)
+        return _unescape_val(obj)
     except ValueError:
+        pass
+    try:
+        cleaned = content_str.replace("\n", "\\n")
+        obj = json.loads(cleaned)
+        return _unescape_val(obj)
+    except ValueError:
+        pass
+
+    # Fallback to custom field extractor for malformed LLM JSON actions
+    action_match = re.search(r'"action"\s*:\s*"([^"]+)"', content_str)
+    if not action_match:
         return None
+    action = action_match.group(1)
+    result = {"action": action}
+    
+    path_match = re.search(r'"path"\s*:\s*"([^"]+)"', content_str)
+    if path_match:
+        result["path"] = path_match.group(1)
+        
+    for field in ("content", "command", "query", "text", "message"):
+        field_pattern = r'"' + field + r'"\s*:\s*'
+        field_match = re.search(field_pattern, content_str)
+        if field_match:
+            start_idx = field_match.end()
+            val_remainder = content_str[start_idx:].strip()
+            
+            quotes_count = 0
+            if val_remainder.startswith('"""'):
+                quotes_count = 3
+            elif val_remainder.startswith('"'):
+                quotes_count = 1
+                
+            val_str = val_remainder[quotes_count:]
+            
+            end_brace = val_str.rfind('}')
+            if end_brace != -1:
+                val_str = val_str[:end_brace].rstrip()
+                
+            if val_str.endswith('"'):
+                val_str = val_str[:-1]
+                
+            if val_str.startswith('""') and not val_str.startswith('"""'):
+                val_str = '"' + val_str
+            if val_str.endswith('""') and not val_str.endswith('"""'):
+                val_str = val_str + '"'
+                
+            val_str = val_str.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\', '\\')
+            result[field] = val_str
+            break
+            
+    # Also handle the "edits" list if present in malformed finished action
+    edits_match = re.search(r'"edits"\s*:\s*\[(.*)\]', content_str, re.DOTALL)
+    if edits_match:
+        try:
+            edits_txt = "[" + edits_match.group(1) + "]"
+            result["edits"] = _unescape_val(json.loads(edits_txt))
+        except Exception:
+            pass
+            
+    return _unescape_val(result)
 
 
 def _diff(path, old, new):
@@ -410,6 +504,37 @@ def agent(body: AgentIn):
             steps.append({"action": "read", "path": rel, "ok": ok})
             messages.append({"role": "assistant", "content": raw})
             messages.append({"role": "user", "content": f"Contents of {rel}:\n\n{content}"})
+            continue
+        if obj["action"] == "write":
+            rel = str(obj.get("path", ""))
+            content = str(obj.get("content", ""))
+            try:
+                target = safe(rel)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content, encoding="utf-8")
+                msg = f"Successfully wrote {rel} ({len(content)} chars)"
+                ok = True
+            except Exception as e:
+                msg = f"Error writing {rel}: {e}"
+                ok = False
+            steps.append({"action": "write", "path": rel, "ok": ok})
+            messages.append({"role": "assistant", "content": raw})
+            messages.append({"role": "user", "content": msg})
+            continue
+        if obj["action"] == "shell":
+            cmd = str(obj.get("command", ""))
+            try:
+                proc = subprocess.run(
+                    cmd, cwd=str(root()), shell=True, capture_output=True, text=True, timeout=60
+                )
+                msg = f"Exit code {proc.returncode}\nStdout:\n{proc.stdout[-4000:]}\nStderr:\n{proc.stderr[-4000:]}"
+                ok = True
+            except Exception as e:
+                msg = f"Error running command: {e}"
+                ok = False
+            steps.append({"action": "shell", "path": cmd, "ok": ok})
+            messages.append({"role": "assistant", "content": raw})
+            messages.append({"role": "user", "content": msg})
             continue
         if obj["action"] == "finish":
             edits = []
@@ -475,6 +600,7 @@ async def agent_stream(body: AgentIn):
         steps = []
         for _round in range(6):
             # Stream from Ollama
+            yield f"data: {json.dumps({'type': 'status', 'status': 'thinking'})}\n\n"
             full = ""
             try:
                 with httpx.stream(
@@ -513,6 +639,7 @@ async def agent_stream(body: AgentIn):
 
             if obj["action"] == "read":
                 rel = str(obj.get("path", ""))
+                yield f"data: {json.dumps({'type': 'tool_start', 'action': 'read', 'path': rel})}\n\n"
                 try:
                     content = safe(rel).read_text(encoding="utf-8", errors="replace")[:8000]
                     ok = True
@@ -523,6 +650,45 @@ async def agent_stream(body: AgentIn):
                 messages.append({"role": "assistant", "content": full})
                 messages.append({"role": "user", "content": f"Contents of {rel}:\n\n{content}"})
                 # Clear streamed text for the next round
+                yield f"data: {json.dumps({'type': 'clear'})}\n\n"
+                continue
+
+            if obj["action"] == "write":
+                rel = str(obj.get("path", ""))
+                content = str(obj.get("content", ""))
+                yield f"data: {json.dumps({'type': 'tool_start', 'action': 'write', 'path': rel})}\n\n"
+                try:
+                    target = safe(rel)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(content, encoding="utf-8")
+                    msg = f"Successfully wrote {rel} ({len(content)} chars)"
+                    ok = True
+                except Exception as e:
+                    msg = f"Error writing {rel}: {e}"
+                    ok = False
+                steps.append({"action": "write", "path": rel, "ok": ok})
+                yield f"data: {json.dumps({'type': 'step', 'step': steps[-1]})}\n\n"
+                messages.append({"role": "assistant", "content": full})
+                messages.append({"role": "user", "content": msg})
+                yield f"data: {json.dumps({'type': 'clear'})}\n\n"
+                continue
+
+            if obj["action"] == "shell":
+                cmd = str(obj.get("command", ""))
+                yield f"data: {json.dumps({'type': 'tool_start', 'action': 'shell', 'command': cmd})}\n\n"
+                try:
+                    proc = subprocess.run(
+                        cmd, cwd=str(root()), shell=True, capture_output=True, text=True, timeout=60
+                    )
+                    msg = f"Exit code {proc.returncode}\nStdout:\n{proc.stdout[-4000:]}\nStderr:\n{proc.stderr[-4000:]}"
+                    ok = True
+                except Exception as e:
+                    msg = f"Error running command: {e}"
+                    ok = False
+                steps.append({"action": "shell", "path": cmd, "ok": ok})
+                yield f"data: {json.dumps({'type': 'step', 'step': steps[-1]})}\n\n"
+                messages.append({"role": "assistant", "content": full})
+                messages.append({"role": "user", "content": msg})
                 yield f"data: {json.dumps({'type': 'clear'})}\n\n"
                 continue
 

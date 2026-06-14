@@ -311,6 +311,111 @@ button {
   font-family: monospace;
 }
 
+/* Agent Status Indicator */
+.agent-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 10px;
+  background: var(--panel-head);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-bright);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.agent-status-indicator.thinking {
+  border-color: var(--accent-soft);
+}
+
+.agent-status-indicator.writing {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.agent-status-indicator.running {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.agent-status-indicator.reading {
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.agent-status-indicator code {
+  font-family: "Consolas", "Fira Code", monospace;
+  font-size: 10px;
+  background: var(--bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  word-break: break-all;
+}
+
+/* Pulse dot animation */
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent);
+  border-radius: 50%;
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.pulse-dot::after {
+  content: "";
+  width: 100%;
+  height: 100%;
+  background-color: var(--accent);
+  border-radius: 50%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.33);
+  }
+  80%, 100% {
+    opacity: 0;
+  }
+}
+
+/* Spinner animation */
+.spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Step badges status */
+.step-ok {
+  border-color: rgba(16, 185, 129, 0.4) !important;
+  color: var(--text-bright) !important;
+}
+
+.step-err {
+  border-color: rgba(239, 68, 68, 0.4) !important;
+  color: var(--del) !important;
+}
+
+
 .edit-card {
   border: 1px solid var(--border);
   border-radius: 6px;

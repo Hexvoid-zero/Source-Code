@@ -301,6 +301,11 @@ async function loadModels() {
       if (mod.name === m.active) o.selected = true;
       sel.appendChild(o);
     }
+    sel.onchange = async () => {
+      const val = sel.value;
+      await api("/models/active", { method: "POST", body: JSON.stringify({ name: val }) });
+      toast("Selected model: " + val);
+    };
   } catch (e) {
     console.error("Failed to load LLM models:", e);
   }
@@ -337,9 +342,42 @@ function renderAgent() {
     } else {
       const d = document.createElement("div"); d.className = "msg-assistant";
       let html = "";
-      if (m.steps && m.steps.length) html += `<div class="steps">${m.steps.map((s) => `<span class="step">${s.action} ${s.path}</span>`).join("")}</div>`;
+      
+      // Render completed steps
+      if (m.steps && m.steps.length) {
+        html += `<div class="steps">`;
+        m.steps.forEach((s) => {
+          let icon = "⚙";
+          let actionLabel = s.action;
+          if (s.action === "read") { icon = "🔍"; actionLabel = "Read"; }
+          else if (s.action === "write") { icon = "📝"; actionLabel = "Wrote"; }
+          else if (s.action === "shell") { icon = "💻"; actionLabel = "Ran"; }
+          
+          const statusClass = s.ok ? "step-ok" : "step-err";
+          html += `<span class="step ${statusClass}">${icon} ${actionLabel}: <code>${s.path}</code></span>`;
+        });
+        html += `</div>`;
+      }
+      
+      // Render active/pending status indicator
+      if (m.status && m.status !== "done") {
+        let statusHtml = "";
+        const cleanPath = (m.pending_path || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+        if (m.status === "thinking") {
+          statusHtml = `<div class="agent-status-indicator thinking"><span class="pulse-dot"></span><span class="status-text">Thinking...</span></div>`;
+        } else if (m.status === "write") {
+          statusHtml = `<div class="agent-status-indicator writing"><span class="spinner"></span><span class="status-text">Writing file <code>${cleanPath}</code>...</span></div>`;
+        } else if (m.status === "shell") {
+          statusHtml = `<div class="agent-status-indicator running"><span class="spinner"></span><span class="status-text">Running command <code>${cleanPath}</code>...</span></div>`;
+        } else if (m.status === "read") {
+          statusHtml = `<div class="agent-status-indicator reading"><span class="spinner"></span><span class="status-text">Reading file <code>${cleanPath}</code>...</span></div>`;
+        }
+        html += statusHtml;
+      }
+      
       if (m.content) html += fmt(m.content);
       d.innerHTML = html;
+      
       (m.edits || []).forEach((e) => {
         const card = document.createElement("div"); card.className = "edit-card";
         card.innerHTML = `<div class="edit-head"><span class="path"><span class="kind ${e.kind}">${e.kind}</span>${e.path}</span>` +
@@ -368,7 +406,7 @@ async function sendAgent() {
   AGENT.push({ role: "user", content: instruction });
   // Add a live-streaming placeholder
   const liveMsgIdx = AGENT.length;
-  AGENT.push({ role: "assistant", content: "", thinking: true, steps: [] });
+  AGENT.push({ role: "assistant", content: "", thinking: true, status: "thinking", steps: [] });
   renderAgent();
 
   const history = AGENT.filter((m, i) => i < liveMsgIdx && !m.thinking).map((m) => ({ role: m.role, content: m.content }));
@@ -402,10 +440,20 @@ async function sendAgent() {
         if (evt.type === "token") {
           liveMsg.content += evt.token;
           liveMsg.thinking = true;
+          liveMsg.status = "thinking";
+          renderAgent();
+        } else if (evt.type === "status") {
+          liveMsg.status = evt.status;
+          renderAgent();
+        } else if (evt.type === "tool_start") {
+          liveMsg.status = evt.action;
+          liveMsg.pending_path = evt.path || evt.command || "";
           renderAgent();
         } else if (evt.type === "step") {
           liveMsg.steps = liveMsg.steps || [];
           liveMsg.steps.push(evt.step);
+          liveMsg.status = "thinking";
+          liveMsg.pending_path = "";
           renderAgent();
         } else if (evt.type === "clear") {
           liveMsg.content = "";

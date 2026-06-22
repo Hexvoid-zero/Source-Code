@@ -1,23 +1,25 @@
 :root {
-  --bg: #0e0e11;
-  --titlebar: #16161a;
-  --panel: #16161a;
-  --panel-head: #1c1c22;
-  --bar: #16161a;
-  --activity: #0a0a0d;
-  --border: #23232b;
-  --border-soft: #1b1b22;
-  --text: #9fa4b0;
-  --text-bright: #e3e6ed;
-  --muted: #575c66;
+  /* SourceMind brand palette: deep indigo, electric blue, slate, off-white, teal.
+     Editor surfaces use a deep indigo-black so code stays readable. */
+  --bg: #15132e;
+  --titlebar: #1E1B4B;
+  --panel: #1E1B4B;
+  --panel-head: #252150;
+  --bar: #1E1B4B;
+  --activity: #141229;
+  --border: #3a3570;
+  --border-soft: #2b2858;
+  --text: #c8cede;
+  --text-bright: #F8FAFC;
+  --muted: #7e88a3;
   --accent: #3b82f6;
-  --accent-soft: rgba(59, 130, 246, 0.12);
+  --accent-soft: rgba(59, 130, 246, 0.14);
   --accent-glow: rgba(59, 130, 246, 0.35);
   --mod: #f59e0b;
-  --unt: #10b981;
+  --unt: #06B6D4;
   --del: #ef4444;
-  --tab-active: #0e0e11;
-  --tab-inactive: #16161a;
+  --tab-active: #15132e;
+  --tab-inactive: #1E1B4B;
 }
 
 * {
@@ -48,6 +50,9 @@ button, input, textarea, select {
   color: inherit;
   background: none;
   border: none;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -ms-user-select: text !important;
 }
 
 button {
@@ -181,9 +186,21 @@ button {
 
 /* Body Layout */
 .body {
-  display: grid;
-  grid-template-columns: 320px 1fr 260px 48px;
+  display: flex;
+  flex-direction: row;
   min-height: 0;
+}
+
+.resizer {
+  width: 4px;
+  background: var(--border-soft);
+  cursor: col-resize;
+  flex-shrink: 0;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.resizer:hover, .resizer.dragging {
+  background: var(--accent);
 }
 
 /* Shared Pane Header */
@@ -230,7 +247,8 @@ button {
 /* Agent Sidebar */
 .agent {
   background: var(--panel);
-  border-right: 1px solid var(--border);
+  width: 320px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -626,7 +644,8 @@ button {
 .editor-wrap {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  flex: 1;
+  min-width: 200px;
   min-height: 0;
   position: relative;
   background: var(--bg);
@@ -897,7 +916,8 @@ button {
 /* Explorer Sidebar */
 .explorer {
   background: var(--panel);
-  border-left: 1px solid var(--border);
+  width: 260px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1037,6 +1057,8 @@ button {
 /* Activity Bar (Far Right) */
 .activity {
   background: var(--activity);
+  width: 48px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1320,4 +1342,223 @@ button {
 
 .pulse {
   animation: pulse 1.5s infinite ease-in-out;
+}
+
+/* History Delete Button */
+.dd-item .del-btn {
+  opacity: 0;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--del);
+  transition: opacity 0.2s, background 0.2s;
+  margin-left: 8px;
+}
+.dd-item:hover .del-btn {
+  opacity: 1;
+}
+.dd-item .del-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* Extensions Sidebar */
+.extensions {
+  background: var(--panel);
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ext-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  gap: 12px;
+}
+
+.ext-search-wrap input {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-bright);
+}
+
+.ext-search-wrap input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.ext-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.ext-card {
+  background: var(--border-soft);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.ext-card:hover {
+  border-color: var(--accent);
+}
+
+.ext-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ext-icon-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ext-icon {
+  font-size: 18px;
+}
+
+.ext-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--text-bright);
+}
+
+.ext-desc {
+  font-size: 11.5px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.ext-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.ext-status-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: bold;
+}
+
+.ext-status-badge.enabled {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--unt);
+}
+
+.ext-status-badge.disabled {
+  background: rgba(87, 92, 102, 0.15);
+  color: var(--muted);
+}
+
+.ext-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.ext-btn.primary {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ext-btn.primary:hover {
+  filter: brightness(1.1);
+}
+
+.ext-btn.secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text-bright);
+}
+
+.ext-btn.secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Extension Detail and Output View */
+.ext-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.ext-back-btn {
+  font-size: 11.5px;
+  color: var(--accent);
+  padding: 4px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  align-self: flex-start;
+}
+
+.ext-back-btn:hover {
+  text-decoration: underline;
+}
+
+.ext-run-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--border-soft);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.ext-run-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text-bright);
+}
+
+.ext-run-output {
+  background: #070709;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 10px;
+  font-family: 'Consolas', monospace;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  color: #c5cbd3;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.ext-run-output .warning {
+  color: var(--mod);
+}
+
+.ext-run-output .critical {
+  color: var(--del);
+}
+
+.ext-run-output .success {
+  color: var(--unt);
 }

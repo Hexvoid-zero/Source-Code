@@ -37,7 +37,7 @@ const SVG = {
 };
 
 // --------------------------------------------------------------------------- state
-const S = { root: "", tabs: [], active: null, expanded: {}, git: {} };
+const S = { root: "", tabs: [], active: null, expanded: {}, git: {}, cid: null };
 let editor = null;
 const $ = (id) => document.getElementById(id);
 
@@ -68,12 +68,12 @@ require(["vs/editor/editor.main"], async function () {
       { token: "function", foreground: "61afef" },
     ],
     colors: {
-      "editor.background": "#0e0e11",
-      "editorGutter.background": "#0e0e11",
-      "editorLineNumber.foreground": "#3b3b4f",
+      "editor.background": "#15132e",
+      "editorGutter.background": "#15132e",
+      "editorLineNumber.foreground": "#4a4578",
       "editorLineNumber.activeForeground": "#3b82f6",
-      "minimap.background": "#0e0e11",
-      "editor.lineHighlightBackground": "#16161f",
+      "minimap.background": "#15132e",
+      "editor.lineHighlightBackground": "#1E1B4B",
       "editor.selectionBackground": "#264f78",
       "editorCursor.foreground": "#528bff",
     },
@@ -189,8 +189,12 @@ async function openFile(path) {
   let tab = S.tabs.find((t) => t.path === path);
   if (!tab) {
     let content = "";
-    try { content = await apiText("/file?path=" + encodeURIComponent(path)); }
-    catch (e) { content = "// " + e.message; }
+    try {
+      content = await apiText("/file?path=" + encodeURIComponent(path));
+    }
+    catch (e) {
+      content = "// " + e.message;
+    }
     tab = { path, model: monaco.editor.createModel(content, langOf(path)), dirty: false };
     S.tabs.push(tab);
   }
@@ -203,6 +207,7 @@ function setActive(path) {
     editor.setModel(tab.model);
     $("stLang").textContent = tab.model.getLanguageId();
     updateBreadcrumb(editor.getPosition() ? editor.getPosition().lineNumber : 1);
+    setTimeout(() => { if (editor) editor.layout(); }, 0);
   }
   renderTabs(); renderTree(); updateWelcome();
 }
@@ -415,9 +420,10 @@ async function sendAgent() {
     const res = await fetch("/api/agent/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instruction, history })
+      body: JSON.stringify({ instruction, history, conversation_id: S.cid })
     });
 
+    if (!res.ok) throw new Error((await res.text()) || res.statusText);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -437,7 +443,9 @@ async function sendAgent() {
         let evt;
         try { evt = JSON.parse(line.slice(6)); } catch { continue; }
 
-        if (evt.type === "token") {
+        if (evt.type === "start") {
+          S.cid = evt.conversation_id;
+        } else if (evt.type === "token") {
           liveMsg.content += evt.token;
           liveMsg.thinking = true;
           liveMsg.status = "thinking";
@@ -593,17 +601,48 @@ function openDropdown(menuEl) {
 
 // --------------------------------------------------------------------------- panels
 function togglePanel(which, forceOn) {
-  if (which === "terminal") { const t = $("terminal"); t.hidden = forceOn ? false : !t.hidden; return; }
-  const el = which === "explorer" ? $("explorerPanel") : $("agentPanel");
-  const show = forceOn ? true : el.style.display === "none";
-  el.style.display = show ? "flex" : "none";
+  if (which === "terminal") {
+    const t = $("terminal");
+    t.hidden = forceOn ? false : !t.hidden;
+    if (editor) setTimeout(() => editor.layout(), 0);
+    return;
+  }
+
+  if (which === "explorer" || which === "extensions") {
+    const exp = $("explorerPanel");
+    const ext = $("extensionsPanel");
+    const resizer = $("resizerRight");
+    
+    const targetEl = which === "explorer" ? exp : ext;
+    const otherEl = which === "explorer" ? ext : exp;
+    
+    const show = forceOn ? true : (window.getComputedStyle(targetEl).display === "none");
+    
+    targetEl.style.display = show ? "flex" : "none";
+    otherEl.style.display = "none";
+    if (resizer) resizer.style.display = show ? "block" : "none";
+    
+    const activeBtn = document.querySelector(`.act[data-toggle="${which}"]`);
+    const otherBtn = document.querySelector(`.act[data-toggle="${which === "explorer" ? "extensions" : "explorer"}"]`);
+    if (activeBtn) activeBtn.classList.toggle("active", show);
+    if (otherBtn) otherBtn.classList.remove("active");
+    
+    if (editor) setTimeout(() => editor.layout(), 0);
+    return;
+  }
   
-  const activeBtn = document.querySelector(`.act[data-toggle="${which}"]`);
-  if (activeBtn) activeBtn.classList.toggle("active", show);
+  const el = which === "agent" ? $("agentPanel") : null;
+  if (el) {
+    const resizer = $("resizerLeft");
+    const show = forceOn ? true : (window.getComputedStyle(el).display === "none");
+    el.style.display = show ? "flex" : "none";
+    if (resizer) resizer.style.display = show ? "block" : "none";
+    
+    const activeBtn = document.querySelector(`.act[data-toggle="${which}"]`);
+    if (activeBtn) activeBtn.classList.toggle("active", show);
+  }
   
-  document.querySelector(".body").style.gridTemplateColumns =
-    ($("agentPanel").style.display === "none" ? "0" : "320px") + " 1fr " +
-    ($("explorerPanel").style.display === "none" ? "0" : "260px") + " 48px";
+  if (editor) setTimeout(() => editor.layout(), 0);
 }
 
 // --------------------------------------------------------------------------- open-folder modal (native OS dialog + fallback)
@@ -660,6 +699,396 @@ async function newFile() {
   }
 }
 
+function initResizers() {
+  const resizerLeft = $("resizerLeft");
+  const resizerRight = $("resizerRight");
+  const agent = $("agentPanel");
+  const explorer = $("explorerPanel");
+
+  if (resizerLeft) {
+    resizerLeft.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      document.body.style.cursor = "col-resize";
+      resizerLeft.classList.add("dragging");
+      
+      const onMouseMove = (moveEvent) => {
+        let width = moveEvent.clientX;
+        if (width < 150) width = 150;
+        if (width > 600) width = 600;
+        agent.style.width = width + "px";
+        if (editor) editor.layout();
+      };
+      
+      const onMouseUp = () => {
+        document.body.style.cursor = "";
+        resizerLeft.classList.remove("dragging");
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        if (editor) editor.layout();
+      };
+      
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    });
+  }
+
+  if (resizerRight) {
+    resizerRight.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      document.body.style.cursor = "col-resize";
+      resizerRight.classList.add("dragging");
+      
+      const onMouseMove = (moveEvent) => {
+        let width = window.innerWidth - 48 - moveEvent.clientX;
+        if (width < 150) width = 150;
+        if (width > 600) width = 600;
+        
+        if (window.getComputedStyle(explorer).display !== "none") {
+          explorer.style.width = width + "px";
+        } else {
+          $("extensionsPanel").style.width = width + "px";
+        }
+        if (editor) editor.layout();
+      };
+      
+      const onMouseUp = () => {
+        document.body.style.cursor = "";
+        resizerRight.classList.remove("dragging");
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        if (editor) editor.layout();
+      };
+      
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    });
+  }
+}
+
+async function openHistoryDropdown(btn) {
+  const dd = $("dropdown");
+  dd.innerHTML = '<div class="dd-item">Loading...</div>';
+  
+  const r = btn.getBoundingClientRect();
+  dd.style.left = r.left + "px";
+  dd.style.top = r.bottom + "px";
+  dd.hidden = false;
+
+  try {
+    const list = await api("/conversations");
+    dd.innerHTML = "";
+    if (list.length === 0) {
+      dd.innerHTML = '<div class="dd-item" style="color: var(--muted); pointer-events: none;">No history</div>';
+      return;
+    }
+    
+    for (const c of list) {
+      const d = document.createElement("div");
+      d.className = "dd-item";
+      
+      const title = c.title || c.id;
+      const displayTitle = title.length > 20 ? title.substring(0, 20) + "..." : title;
+      
+      d.innerHTML = `<span>${displayTitle}</span>` + 
+                    `<span class="del-btn" title="Delete conversation">✕</span>`;
+      
+      d.onclick = async (e) => {
+        if (e.target.classList.contains("del-btn")) {
+          e.stopPropagation();
+          if (confirm("Delete this conversation?")) {
+            try {
+              await api(`/conversations/${c.id}`, { method: "DELETE" });
+              toast("Conversation deleted");
+              if (S.cid === c.id) {
+                S.cid = null;
+                AGENT.length = 0;
+                renderAgent();
+              }
+              openHistoryDropdown(btn);
+            } catch (err) {
+              toast("Delete failed: " + err.message);
+            }
+          }
+          return;
+        }
+        
+        dd.hidden = true;
+        try {
+          const fullConv = await api(`/conversations/${c.id}`);
+          S.cid = c.id;
+          AGENT.length = 0;
+          for (const msg of fullConv.messages) {
+            AGENT.push(msg);
+          }
+          renderAgent();
+          toast("Loaded conversation");
+        } catch (err) {
+          toast("Load failed: " + err.message);
+        }
+      };
+      
+      dd.appendChild(d);
+    }
+  } catch (err) {
+    dd.innerHTML = `<div class="dd-item" style="color: var(--del);">Error: ${err.message}</div>`;
+  }
+}
+
+// --------------------------------------------------------------------------- extensions
+const EXTENSIONS = [
+  {
+    id: "security",
+    name: "Source Security",
+    icon: "🛡️",
+    desc: "Scans active files and folders for vulnerabilities, hardcoded credentials, and security weaknesses.",
+    enabled: false,
+    longDesc: "Source Security acts as an on-demand code security auditor inside your workspace. When enabled, it performs deep lexical and regex scans on the active file or directories to find potential security risks, matching patterns such as:\n\n- SQL Injection vulnerabilities\n- Hardcoded passwords, secrets, API keys, or tokens\n- Use of unsafe JavaScript/Python/C++ execution contexts\n- Shell execution injection risks\n\nEnable the extension to run security audits on your files instantly.",
+  },
+  {
+    id: "design",
+    name: "Source Design",
+    icon: "🎨",
+    desc: "Analyzes styling and CSS/HTML markup. Generates modern aesthetics and layout improvements.",
+    enabled: false,
+    longDesc: "Source Design guides you to create visually stunning layouts. It scans stylesheets and templates to audit design patterns and suggest modern enhancements, including:\n\n- Standardizing CSS variables/design tokens\n- Color palette contrast ratios and elevations\n- Adding modern box shadows and gradient typography\n- Micro-animations and hover transitions\n- Typography scale consistency and responsive scaling",
+  },
+  {
+    id: "optimizer",
+    name: "Source Optimizer",
+    icon: "⚡",
+    desc: "Profiles loops and resource usages in your code. Suggests memory and execution optimizations.",
+    enabled: false,
+    longDesc: "Source Optimizer scans active files for performance bottlenecks, highlighting areas that could lead to runtime overhead or excessive memory footprint. It alerts you about:\n\n- Nested loops with high time complexity (O(N^2))\n- Inefficient loop concatenations or DOM manipulations\n- Uncached selector variables\n- Blocking synchronous I/O operations",
+  }
+];
+
+function renderExtensions() {
+  const list = $("extensionsList");
+  if (!list) return;
+  const searchVal = ($("extSearch").value || "").toLowerCase();
+  list.innerHTML = "";
+  
+  const filtered = EXTENSIONS.filter(e => 
+    e.name.toLowerCase().includes(searchVal) || 
+    e.desc.toLowerCase().includes(searchVal)
+  );
+
+  for (const ext of filtered) {
+    const card = document.createElement("div");
+    card.className = "ext-card";
+    card.innerHTML = `
+      <div class="ext-header">
+        <div class="ext-icon-name">
+          <span class="ext-icon">${ext.icon}</span>
+          <span class="ext-name">${ext.name}</span>
+        </div>
+        <span class="ext-status-badge ${ext.enabled ? "enabled" : "disabled"}">
+          ${ext.enabled ? "Enabled" : "Disabled"}
+        </span>
+      </div>
+      <div class="ext-desc">${ext.desc}</div>
+      <div class="ext-actions">
+        <button class="ext-btn secondary view-details-btn">Details</button>
+        <button class="ext-btn ${ext.enabled ? "secondary toggle-ext-btn" : "primary toggle-ext-btn"}">
+          ${ext.enabled ? "Disable" : "Enable"}
+        </button>
+      </div>
+    `;
+
+    // Toggle button handler
+    card.querySelector(".toggle-ext-btn").onclick = (e) => {
+      e.stopPropagation();
+      ext.enabled = !ext.enabled;
+      renderExtensions();
+      if ($("extensionDetail").hidden === false && currentDetailExtId === ext.id) {
+        showExtensionDetail(ext);
+      }
+      toast(`${ext.name} has been ${ext.enabled ? "enabled" : "disabled"}`);
+    };
+
+    // Details button/card click handler
+    const viewDetail = () => {
+      showExtensionDetail(ext);
+    };
+    card.querySelector(".view-details-btn").onclick = (e) => {
+      e.stopPropagation();
+      viewDetail();
+    };
+    card.onclick = viewDetail;
+
+    list.appendChild(card);
+  }
+}
+
+let currentDetailExtId = null;
+
+function getDetailInteractivePanelHtml(ext) {
+  if (!ext.enabled) {
+    return `
+      <div style="background:rgba(255,255,255,0.02); border:1px dashed var(--border); border-radius:6px; padding:12px; text-align:center; font-size:11.5px;">
+        Enable this extension to unlock its interactive capabilities.
+      </div>
+    `;
+  }
+  let btnLabel = "";
+  if (ext.id === "security") btnLabel = "🛡️ Run Security Scan";
+  else if (ext.id === "design") btnLabel = "🎨 Review Design / Layout";
+  else btnLabel = "⚡ Optimize Performance";
+
+  return `
+    <div class="ext-run-panel">
+      <span class="ext-run-title">Interactive Panel</span>
+      <button class="ext-btn primary run-ext-btn" style="width:100%; padding: 6px;">
+        ${btnLabel}
+      </button>
+      <div class="ext-run-output" id="extOutput" style="display:none;"></div>
+    </div>
+  `;
+}
+
+function showExtensionDetail(ext) {
+  currentDetailExtId = ext.id;
+  $("extensionsList").style.display = "none";
+  $("extensionDetail").hidden = false;
+
+  const content = $("extDetailContent");
+  content.innerHTML = `
+    <h3 style="display:flex; align-items:center; gap:8px; margin-bottom: 8px;">
+      <span style="font-size:24px;">${ext.icon}</span>
+      <span style="color:var(--text-bright); font-size:16px;">${ext.name}</span>
+    </h3>
+    <div style="font-size: 11px; margin-bottom: 12px;">
+      Status: <span class="ext-status-badge ${ext.enabled ? "enabled" : "disabled"}">${ext.enabled ? "Enabled" : "Disabled"}</span>
+    </div>
+    <p style="font-size:11.5px; color:var(--text); line-height:1.5; white-space:pre-wrap; margin-bottom:16px;">${ext.longDesc}</p>
+    ${getDetailInteractivePanelHtml(ext)}
+  `;
+
+  if (ext.enabled) {
+    content.querySelector(".run-ext-btn").onclick = () => {
+      runExtensionAction(ext.id);
+    };
+  }
+}
+
+function getActiveFileContent() {
+  const activePath = S.active;
+  if (!activePath) return { path: null, code: "" };
+  const tab = S.tabs.find(t => t.path === activePath);
+  return { path: activePath, code: tab ? tab.model.getValue() : "" };
+}
+
+function runExtensionAction(id) {
+  const output = $("extOutput");
+  if (!output) return;
+  output.style.display = "block";
+  output.innerHTML = "Auditing workspace active editor context...\n";
+
+  const { path, code } = getActiveFileContent();
+
+  if (!path) {
+    output.innerHTML = '<span class="critical">Error: No file is currently open in the editor. Please open a source file to analyze.</span>';
+    return;
+  }
+
+  const filename = path.split("/").pop();
+  output.innerHTML += `Analyzing active file: ${filename} (${code.length} characters)...\n\n`;
+
+  setTimeout(() => {
+    if (id === "security") {
+      let issues = [];
+      const lines = code.split("\n");
+      
+      lines.forEach((line, idx) => {
+        const lineNum = idx + 1;
+        if (/api_key|password|secret|token|private_key/i.test(line) && !/placeholder|example|mock|true|false/i.test(line) && line.includes("=") && line.includes('"')) {
+          issues.push(`<span class="critical">[CRITICAL] Line ${lineNum}: Hardcoded credentials/secrets found!</span>\n  ↳ Code: <code>${line.trim().substring(0, 50).replace(/&/g, "&amp;").replace(/</g, "&lt;")}</code>`);
+        }
+        if (/eval\s*\(/.test(line)) {
+          issues.push(`<span class="critical">[CRITICAL] Line ${lineNum}: Use of unsafe eval() detected (Code Injection Risk)!</span>\n  ↳ Code: <code>${line.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;")}</code>`);
+        }
+        if (/shell\s*=\s*True/i.test(line)) {
+          issues.push(`<span class="critical">[CRITICAL] Line ${lineNum}: shell=True in subprocess detected (Command Injection Risk)!</span>\n  ↳ Code: <code>${line.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;")}</code>`);
+        }
+        if (/\.innerHTML\s*=/.test(line)) {
+          issues.push(`<span class="warning">[WARNING] Line ${lineNum}: innerHTML assignment detected (Potential DOM XSS). Use textContent or safe sanitization instead.</span>\n  ↳ Code: <code>${line.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;")}</code>`);
+        }
+        if (/SELECT\s+.*\s+FROM\s+.*\s+WHERE\s+.*\+/i.test(line) || /SELECT\s+.*\s+FROM\s+.*\s+WHERE\s+.*\%/i.test(line)) {
+          issues.push(`<span class="critical">[CRITICAL] Line ${lineNum}: Insecure SQL string concatenation detected (SQL Injection Risk)!</span>\n  ↳ Code: <code>${line.trim().replace(/&/g, "&amp;").replace(/</g, "&lt;")}</code>`);
+        }
+      });
+
+      if (issues.length > 0) {
+        output.innerHTML += `<span class="critical">Security Scan Finished. Found ${issues.length} issue(s):</span>\n\n` + issues.join("\n\n");
+      } else {
+        output.innerHTML += `<span class="success">✓ Security Scan Complete!</span>\n0 vulnerabilities detected in <b>${filename}</b>. All parsed checks passed successfully.`;
+      }
+    } 
+    else if (id === "design") {
+      let suggestions = [];
+      const lines = code.split("\n");
+
+      lines.forEach((line, idx) => {
+        const lineNum = idx + 1;
+        if (/#([0-9a-fA-F]{3}){1,2}\b/.test(line) && !line.includes("var(--")) {
+          suggestions.push(`<span class="warning">[TIP] Line ${lineNum}: Hardcoded hex color detected.</span>\n  ↳ Recommendation: Abstract colors to CSS variables (e.g. <code>var(--accent)</code>) to maintain unified design tokens.`);
+        }
+        if (/cursor\s*:\s*pointer/i.test(line)) {
+          suggestions.push(`<span class="success">[Aesthetic] Line ${lineNum}: Interactive element detected (cursor: pointer).</span>\n  ↳ Recommendation: Ensure you add a smooth transition (e.g. <code>transition: background 0.2s, transform 0.2s</code>) to create a premium feel.`);
+        }
+        if (/font-family\s*:\s*Arial|Times|Courier/i.test(line)) {
+          const matchedFont = line.match(/font-family\s*:\s*([^;]+)/i);
+          suggestions.push(`<span class="warning">[Typography] Line ${lineNum}: Default browser font-family: ${matchedFont ? matchedFont[1] : 'default'} used.</span>\n  ↳ Recommendation: Use modern typography (e.g. <code>Outfit</code>, <code>Inter</code>, or <code>Roboto</code>) from Google Fonts to elevate look and feel.`);
+        }
+        if (/:hover\b/.test(line)) {
+          suggestions.push(`<span class="success">[Micro-animation] Line ${lineNum}: Hover pseudo-selector detected.</span>\n  ↳ Recommendation: Combine hover states with subtle scale effects (e.g. <code>transform: translateY(-1px)</code>) for interactive depth.`);
+        }
+      });
+
+      if (suggestions.length > 0) {
+        output.innerHTML += `<span class="warning">Design Review Finished. ${suggestions.length} layout suggestions:</span>\n\n` + suggestions.join("\n\n");
+      } else {
+        output.innerHTML += `<span class="success">✓ Design Audit Complete!</span>\nAnalyzed code styling in <b>${filename}</b>. Standard styling rules are followed. Premium typography and responsive variables are recommended for layouts.`;
+      }
+    } 
+    else if (id === "optimizer") {
+      let opts = [];
+      const lines = code.split("\n");
+
+      lines.forEach((line, idx) => {
+        const lineNum = idx + 1;
+        if (/\bfor\s*\(/.test(line) || /for\s+.*\s+in\s+/.test(line)) {
+          for (let j = idx + 1; j < Math.min(idx + 5, lines.length); j++) {
+            if (/\bfor\s*\(/.test(lines[j]) || /for\s+.*\s+in\s+/.test(lines[j])) {
+              opts.push(`<span class="warning">[PERFORMANCE] Line ${lineNum} & ${j + 1}: Nested loops detected (Potential O(N^2) complexity).</span>\n  ↳ Recommendation: Consider optimizing with cache lookups, dictionaries, or hash maps to reduce runtime complexity to O(N).`);
+              break;
+            }
+          }
+        }
+        if (/\+=\s*.*['"]/.test(line) && (line.includes("for") || lines[idx-1]?.includes("for"))) {
+          opts.push(`<span class="warning">[MEMORY] Line ${lineNum}: In-loop string concatenation (+=) detected.</span>\n  ↳ Recommendation: Use array buffering (e.g. <code>.push()</code> and <code>.join()</code>) or StringBuilder to avoid excessive memory allocations.`);
+        }
+        if (/document\.getElementById|document\.querySelector/i.test(line)) {
+          const count = (code.match(new RegExp(line.trim().replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g')) || []).length;
+          if (count > 1) {
+            opts.push(`<span class="warning">[OPTIMIZATION] Line ${lineNum}: Repeated DOM selection query.</span>\n  ↳ Recommendation: Cache DOM element selector outputs in a variable rather than querying the document multiple times.`);
+          }
+        }
+        if (/_sync\s*\(|FileSync\s*\(|read_text\s*\(/i.test(line)) {
+          opts.push(`<span class="warning">[BLOCKING] Line ${lineNum}: Synchronous I/O operations detected.</span>\n  ↳ Recommendation: Use asynchronous handlers (<code>async/await</code>, <code>Promises</code>, or non-blocking threads) to keep process loops interactive.`);
+        }
+      });
+
+      if (opts.length > 0) {
+        output.innerHTML += `<span class="warning">Performance Audit Finished. ${opts.length} optimization tips:</span>\n\n` + opts.join("\n\n");
+      } else {
+        output.innerHTML += `<span class="success">✓ Performance Check Complete!</span>\nNo obvious bottlenecks found in <b>${filename}</b>. The code structure is optimized for standard runtime loads.`;
+      }
+    }
+    output.scrollTop = output.scrollHeight;
+  }, 800);
+}
+
 // --------------------------------------------------------------------------- wire up
 document.addEventListener("DOMContentLoaded", () => {
   $("menus").querySelectorAll(".menu").forEach((m) => {
@@ -670,7 +1099,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("agentSend").onclick = sendAgent;
   $("agentText").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAgent(); } });
-  $("agentNew").onclick = () => { AGENT.length = 0; renderAgent(); };
+  $("agentNew").onclick = () => { S.cid = null; AGENT.length = 0; renderAgent(); };
+  $("agentHistoryBtn").onclick = (e) => { e.stopPropagation(); openHistoryDropdown(e.currentTarget); };
 
   $("refreshBtn").onclick = async () => { await loadGit(); await expandDir(""); renderTree(); };
   $("newFileBtn").onclick = newFile;
@@ -732,5 +1162,16 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Extensions Wiring
+  $("extSearch").oninput = renderExtensions;
+  $("extBackBtn").onclick = () => {
+    $("extensionDetail").hidden = true;
+    $("extensionsList").style.display = "flex";
+    currentDetailExtId = null;
+    renderExtensions();
+  };
+
+  initResizers();
+  renderExtensions();
   renderAgent();
 });

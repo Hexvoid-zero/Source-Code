@@ -39,7 +39,7 @@
           <span class="pane-title">Agent</span>
           <span class="pane-actions">
             <button id="agentNew" title="New conversation"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
-            <button title="History"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/><line x1="12" y1="7" x2="12" y2="12"/><line x1="12" y1="12" x2="16" y2="14"/></svg></button>
+            <button id="agentHistoryBtn" title="History"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><polyline points="3 3 3 8 8 8"/><line x1="12" y1="7" x2="12" y2="12"/><line x1="12" y1="12" x2="16" y2="14"/></svg></button>
             <button title="More"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg></button>
           </span>
         </div>
@@ -59,6 +59,8 @@
           <div class="dock-foot">AI may make mistakes. Double-check all generated code.</div>
         </div>
       </aside>
+
+      <div class="resizer" id="resizerLeft"></div>
 
       <!-- EDITOR (center) -->
       <main class="editor-wrap">
@@ -89,6 +91,8 @@
         </div>
       </main>
 
+      <div class="resizer" id="resizerRight"></div>
+
       <!-- EXPLORER (right) -->
       <aside class="explorer" id="explorerPanel">
         <div class="pane-head">
@@ -109,6 +113,23 @@
         </div>
       </aside>
 
+      <!-- EXTENSIONS (right, sharing slot) -->
+      <aside class="extensions" id="extensionsPanel" style="display: none;">
+        <div class="pane-head">
+          <span class="pane-title">Extensions</span>
+        </div>
+        <div class="ext-container">
+          <div class="ext-search-wrap">
+            <input type="text" id="extSearch" placeholder="Search extensions..." />
+          </div>
+          <div class="ext-list" id="extensionsList"></div>
+          <div class="ext-detail" id="extensionDetail" hidden>
+            <button class="ext-back-btn" id="extBackBtn">← Back to List</button>
+            <div id="extDetailContent"></div>
+          </div>
+        </div>
+      </aside>
+
       <!-- ACTIVITY BAR (far right) -->
       <nav class="activity">
         <button class="act active" data-toggle="explorer" title="Explorer">
@@ -116,6 +137,11 @@
         </button>
         <button class="act" data-toggle="agent" title="Agent">
           <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3c.132 4.132 1.868 5.868 6 6-.132 4.132-1.868 5.868-6 6-.132-4.132-1.868-5.868-6-6 .132-4.132 1.868-5.868 6-6z M5 16c.066 2.066.934 2.934 3 3-.066 2.066-.934 2.934-3 3-.066-2.066-.934-2.934-3-3 .066-2.066.934-2.934 3-3z"/></svg>
+        </button>
+        <button class="act" data-toggle="extensions" title="Extensions" id="extensionsAct">
+          <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 9h5V4H4v5zm10-5v5h5V4h-5zm-5 10H4v5h5v-5zm10 0h-5v5h5v-5z"/>
+          </svg>
         </button>
         <button class="act sc" id="scAct" title="Source Control">
           <svg class="act-svg" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 15V9a4 4 0 0 0-4-4H9"/><line x1="6" y1="9" x2="6" y2="15"/></svg>

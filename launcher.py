@@ -21,15 +21,15 @@ _SPLASH_HTML = """\
 <html lang="en"><head><meta charset="UTF-8"><title>Source Code IDE</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#0e0e10;display:flex;align-items:center;justify-content:center;
-height:100vh;font-family:'Segoe UI',system-ui,sans-serif;color:#c8ccd4;overflow:hidden}
+body{background:#1E1B4B;display:flex;align-items:center;justify-content:center;
+height:100vh;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:#F8FAFC;overflow:hidden}
 .wrap{text-align:center}
-.logo{font-size:64px;color:#7c6bf6;margin-bottom:24px;animation:pulse 2s ease-in-out infinite}
-h1{font-size:22px;font-weight:500;letter-spacing:.4px;margin-bottom:10px}
-p{font-size:13px;color:#6c7086;margin-bottom:32px}
-.bar{width:200px;height:3px;background:#1e1e24;border-radius:3px;margin:0 auto;overflow:hidden;position:relative}
+.logo{font-size:64px;color:#3B82F6;text-shadow:0 0 20px rgba(59,130,246,0.6);margin-bottom:24px;animation:pulse 2s ease-in-out infinite}
+h1{font-size:22px;font-weight:700;letter-spacing:.4px;margin-bottom:10px;color:#F8FAFC}
+p{font-size:13px;color:#64748B;margin-bottom:32px}
+.bar{width:200px;height:3px;background:#252150;border-radius:3px;margin:0 auto;overflow:hidden;position:relative}
 .bar::after{content:'';position:absolute;left:-40%;top:0;width:40%;height:100%;
-background:linear-gradient(90deg,transparent,#7c6bf6,transparent);border-radius:3px;
+background:linear-gradient(90deg,transparent,#3B82F6,#06B6D4,transparent);border-radius:3px;
 animation:slide 1.2s ease-in-out infinite}
 @keyframes slide{0%{left:-40%}100%{left:100%}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
@@ -64,7 +64,8 @@ def main():
 
         window = webview.create_window(
             "Source Code IDE", html=_SPLASH_HTML,
-            width=1480, height=940, min_size=(960, 620)
+            width=1480, height=940, min_size=(960, 620),
+            text_select=True
         )
 
         def _on_gui_ready():

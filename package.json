@@ -1,9 +1,0 @@
-{
-  "name": "source-code-ide",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Standalone VS Code-style IDE with an AI coding agent",
-  "dependencies": {
-    "monaco-editor": "0.52.2"
-  }
-}

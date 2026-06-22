@@ -11,6 +11,8 @@ import shutil
 import string
 import subprocess
 import sys
+import time
+import uuid
 from pathlib import Path
 
 import httpx
@@ -47,6 +49,8 @@ _state = {
     "active_model": None
 }
 WORKSPACES = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "SourceCodeIDE" / "workspaces"
+CONV_DIR = Path(os.getenv("LOCALAPPDATA") or Path.home()) / "SourceCodeIDE" / "conversations"
+CONV_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def root() -> Path:
@@ -73,9 +77,9 @@ app.add_middleware(
 
 # ----------------------------------------------------------------------------- LLM
 def list_models() -> list[dict]:
+    out = []
     try:
         r = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=3.0)
-        out = []
         for m in r.json().get("models", []):
             name = m.get("name", "")
             if not name:
@@ -88,9 +92,17 @@ def list_models() -> list[dict]:
                     "is_cloud": name.endswith("cloud"),
                 }
             )
-        return out
     except Exception:
-        return []
+        pass
+    out.append(
+        {
+            "name": "Source Agent",
+            "size": 0,
+            "is_embed": False,
+            "is_cloud": True,
+        }
+    )
+    return out
 
 
 def resolve_model() -> str | None:
@@ -112,16 +124,22 @@ def llm_available() -> bool:
 
 
 def llm_chat(messages: list[dict], model: str, max_tokens: int = 3500) -> str | None:
-    try:
-        r = httpx.post(
-            f"{OLLAMA_URL}/api/chat",
-            json={"model": model, "messages": messages, "stream": False, "options": {"num_predict": max_tokens}},
-            timeout=300.0,
-        )
-        r.raise_for_status()
-        return r.json()["message"]["content"]
-    except Exception:
-        return None
+    for attempt in range(5):
+        try:
+            r = httpx.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={"model": model, "messages": messages, "stream": False, "options": {"num_predict": max_tokens}},
+                timeout=120.0,
+            )
+            r.raise_for_status()
+            content = r.json()["message"]["content"]
+            if content:
+                return content
+        except Exception as e:
+            print(f"llm_chat attempt {attempt+1} failed: {e}")
+            if attempt < 4:
+                time.sleep(0.5 * (attempt + 1))
+    return None
 
 
 # ----------------------------------------------------------------------------- models
@@ -146,10 +164,58 @@ class RunIn(BaseModel):
 class AgentIn(BaseModel):
     instruction: str
     history: list[dict] = []
+    conversation_id: str | None = None
 
 
 class ApplyIn(BaseModel):
     edits: list[dict]
+
+
+# ----------------------------------------------------------------------------- conversations
+def conv_path(cid: str) -> Path:
+    return CONV_DIR / f"{cid}.json"
+
+
+def load_conv(cid: str) -> dict:
+    p = conv_path(cid)
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"id": cid, "title": "New conversation", "messages": [], "updated": time.time()}
+
+
+def save_conv(cid: str, conv: dict) -> None:
+    if "model" not in conv:
+        active = resolve_model()
+        if active:
+            conv["model"] = active
+    conv_path(cid).write_text(json.dumps(conv), encoding="utf-8")
+
+
+@app.get("/api/conversations")
+def conversations():
+    out = []
+    for p in CONV_DIR.glob("*.json"):
+        try:
+            c = json.loads(p.read_text(encoding="utf-8"))
+            out.append({"id": c["id"], "title": c.get("title", "Conversation"), "updated": c.get("updated", 0)})
+        except Exception:
+            continue
+    out.sort(key=lambda c: c["updated"], reverse=True)
+    return out
+
+
+@app.get("/api/conversations/{cid}")
+def get_conversation(cid: str):
+    return load_conv(cid)
+
+
+@app.delete("/api/conversations/{cid}")
+def delete_conversation(cid: str):
+    conv_path(cid).unlink(missing_ok=True)
+    return {"ok": True}
 
 
 # ----------------------------------------------------------------------------- workspace
@@ -477,23 +543,102 @@ def _diff(path, old, new):
 @app.post("/api/agent")
 def agent(body: AgentIn):
     model = resolve_model()
+    cid = body.conversation_id or uuid.uuid4().hex[:12]
+    conv = load_conv(cid)
+    
+    if model == "Source Agent":
+        # 1. Sync workspace
+        try:
+            httpx.post("http://127.0.0.1:8775/api/workspace", json={"path": str(root())}, timeout=5.0)
+        except Exception as e:
+            error_msg = f"Failed to connect to Source Agent on port 8775. Make sure Source Agent is running. Error: {e}"
+            conv["messages"].append({"role": "user", "content": body.instruction})
+            conv["messages"].append({"role": "assistant", "content": error_msg, "steps": []})
+            conv["updated"] = time.time()
+            save_conv(cid, conv)
+            return {"message": error_msg, "steps": [], "edits": [], "conversation_id": cid}
+
+        # 2. Call chat and collect final message
+        conv["messages"].append({"role": "user", "content": body.instruction})
+        final_msg = ""
+        steps = []
+        try:
+            with httpx.stream(
+                "POST", "http://127.0.0.1:8775/api/chat",
+                json={"message": body.instruction, "conversation_id": cid},
+                timeout=180.0
+            ) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except Exception:
+                        continue
+                    t = evt.get("type")
+                    if t == "final":
+                        final_msg = evt.get("text", "")
+                    elif t == "tool_done":
+                        kind = evt.get("kind")
+                        action_name = "thinking"
+                        path_or_cmd = ""
+                        if kind == "shell":
+                            action_name = "shell"
+                            path_or_cmd = evt.get("command", "")
+                        elif kind in ("read_file", "list_dir"):
+                            action_name = "read"
+                            path_or_cmd = evt.get("path", "")
+                        elif kind == "write_file":
+                            action_name = "write"
+                            path_or_cmd = evt.get("path", "")
+                        elif kind == "web_search":
+                            action_name = "thinking"
+                            path_or_cmd = "Searched: " + evt.get("query", "")
+                        elif kind == "mcp_tool":
+                            action_name = "thinking"
+                            path_or_cmd = "Called MCP: " + evt.get("tool", "")
+                        steps.append({"action": action_name, "path": path_or_cmd, "ok": evt.get("ok", True)})
+            conv["messages"].append({"role": "assistant", "content": final_msg, "steps": steps, "edits": []})
+            conv["updated"] = time.time()
+            save_conv(cid, conv)
+            return {"message": final_msg, "steps": steps, "edits": [], "conversation_id": cid}
+        except Exception as e:
+            error_msg = f"Error communicating with Source Agent: {e}"
+            return {"message": error_msg, "steps": [], "edits": [], "conversation_id": cid}
+
     if not model:
-        return {"message": "Ollama isn't connected. Start it (ollama serve) and pull a model.", "steps": [], "edits": []}
+        error_msg = "Ollama isn't connected. Start it (ollama serve) and pull a model."
+        conv["messages"].append({"role": "user", "content": body.instruction})
+        conv["messages"].append({"role": "assistant", "content": error_msg, "steps": []})
+        conv["updated"] = time.time()
+        save_conv(cid, conv)
+        return {"message": error_msg, "steps": [], "edits": [], "conversation_id": cid}
+
+    conv["messages"].append({"role": "user", "content": body.instruction})
 
     tree_txt = "\n".join(_full_tree())
     messages = [{"role": "system", "content": AGENT_SYSTEM.format(tree=tree_txt[:9000])}]
-    for h in body.history[-8:]:
+    for h in body.history[-20:]:
         messages.append({"role": h.get("role", "user"), "content": str(h.get("content", ""))[:4000]})
     messages.append({"role": "user", "content": body.instruction})
 
     steps = []
-    for _ in range(6):
+    for _ in range(100):
         raw = llm_chat(messages, model)
         if not raw:
-            return {"message": "The model did not respond.", "steps": steps, "edits": []}
+            msg = "The model did not respond."
+            conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+            conv["updated"] = time.time()
+            save_conv(cid, conv)
+            return {"message": msg, "steps": steps, "edits": [], "conversation_id": cid}
         obj = _parse(raw)
         if not obj or "action" not in obj:
-            return {"message": raw.strip(), "steps": steps, "edits": []}
+            msg = raw.strip()
+            conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+            conv["updated"] = time.time()
+            save_conv(cid, conv)
+            return {"message": msg, "steps": steps, "edits": [], "conversation_id": cid}
         if obj["action"] == "read":
             rel = str(obj.get("path", ""))
             try:
@@ -551,9 +696,26 @@ def agent(body: AgentIn):
                 if old == new:
                     continue
                 edits.append({"path": rel, "kind": "create" if old == "" else "edit", "new_content": new, "diff": _diff(rel, old, new)})
-            return {"message": str(obj.get("message", "")), "steps": steps, "edits": edits}
-        return {"message": raw.strip(), "steps": steps, "edits": []}
-    return {"message": "Reached step limit.", "steps": steps, "edits": []}
+            
+            final_message = str(obj.get("message", ""))
+            conv["messages"].append({"role": "assistant", "content": final_message, "steps": steps, "edits": edits})
+            conv["updated"] = time.time()
+            if conv.get("title") in (None, "", "New conversation"):
+                conv["title"] = body.instruction[:60]
+            save_conv(cid, conv)
+            return {"message": final_message, "steps": steps, "edits": edits, "conversation_id": cid}
+            
+        msg = raw.strip()
+        conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+        conv["updated"] = time.time()
+        save_conv(cid, conv)
+        return {"message": msg, "steps": steps, "edits": [], "conversation_id": cid}
+        
+    msg = "Reached step limit."
+    conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+    conv["updated"] = time.time()
+    save_conv(cid, conv)
+    return {"message": msg, "steps": steps, "edits": [], "conversation_id": cid}
 
 
 def _resolve_edits(raw: str, steps: list) -> dict:
@@ -585,56 +747,178 @@ def _resolve_edits(raw: str, steps: list) -> dict:
 async def agent_stream(body: AgentIn):
     """SSE endpoint: streams tokens in real-time, then sends the final result."""
     model = resolve_model()
+    cid = body.conversation_id or uuid.uuid4().hex[:12]
+    conv = load_conv(cid)
 
     async def _generate():
-        if not model:
-            yield f"data: {json.dumps({'type': 'done', 'message': 'Ollama is not connected. Start it (ollama serve) and pull a model.', 'steps': [], 'edits': []})}\n\n"
+        if model == "Source Agent":
+            # 1. Sync workspace
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post("http://127.0.0.1:8775/api/workspace", json={"path": str(root())}, timeout=5.0)
+            except Exception as e:
+                error_msg = f"Failed to connect to Source Agent on port 8775. Make sure Source Agent is running. Error: {e}"
+                conv["messages"].append({"role": "user", "content": body.instruction})
+                conv["messages"].append({"role": "assistant", "content": error_msg, "steps": []})
+                conv["updated"] = time.time()
+                save_conv(cid, conv)
+                yield f"data: {json.dumps({'type': 'done', 'message': error_msg, 'steps': [], 'edits': [], 'conversation_id': cid})}\n\n"
+                return
+
+            conv["messages"].append({"role": "user", "content": body.instruction})
+            yield f"data: {json.dumps({'type': 'start', 'conversation_id': cid})}\n\n"
+
+            final_msg = ""
+            steps = []
+            try:
+                async with httpx.AsyncClient() as client:
+                    async with client.stream(
+                        "POST", "http://127.0.0.1:8775/api/chat",
+                        json={"message": body.instruction, "conversation_id": cid},
+                        timeout=180.0
+                    ) as resp:
+                        resp.raise_for_status()
+                        async for line in resp.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                evt = json.loads(line)
+                            except Exception:
+                                continue
+                            t = evt.get("type")
+                            if t == "think":
+                                yield f"data: {json.dumps({'type': 'status', 'status': 'thinking'})}\n\n"
+                            elif t == "memory":
+                                mem_txt = evt.get("text", "")
+                                yield f"data: {json.dumps({'type': 'token', 'token': f'[Memory: {mem_txt}]\\n'})}\n\n"
+                            elif t == "tool_start":
+                                kind = evt.get("kind")
+                                action_name = "thinking"
+                                path_or_cmd = ""
+                                if kind == "shell":
+                                    action_name = "shell"
+                                    path_or_cmd = evt.get("command", "")
+                                elif kind in ("read_file", "list_dir"):
+                                    action_name = "read"
+                                    path_or_cmd = evt.get("path", "")
+                                elif kind == "write_file":
+                                    action_name = "write"
+                                    path_or_cmd = evt.get("path", "")
+                                elif kind == "web_search":
+                                    action_name = "thinking"
+                                    path_or_cmd = "Searching: " + evt.get("query", "")
+                                elif kind == "mcp_tool":
+                                    action_name = "thinking"
+                                    path_or_cmd = "Calling MCP: " + evt.get("tool", "")
+                                yield f"data: {json.dumps({'type': 'tool_start', 'action': action_name, 'path': path_or_cmd})}\n\n"
+                            elif t == "tool_done":
+                                kind = evt.get("kind")
+                                action_name = "thinking"
+                                path_or_cmd = ""
+                                if kind == "shell":
+                                    action_name = "shell"
+                                    path_or_cmd = evt.get("command", "")
+                                elif kind in ("read_file", "list_dir"):
+                                    action_name = "read"
+                                    path_or_cmd = evt.get("path", "")
+                                elif kind == "write_file":
+                                    action_name = "write"
+                                    path_or_cmd = evt.get("path", "")
+                                elif kind == "web_search":
+                                    action_name = "thinking"
+                                    path_or_cmd = "Searched: " + evt.get("query", "")
+                                elif kind == "mcp_tool":
+                                    action_name = "thinking"
+                                    path_or_cmd = "Called MCP: " + evt.get("tool", "")
+                                step_obj = {"action": action_name, "path": path_or_cmd, "ok": evt.get("ok", True)}
+                                steps.append(step_obj)
+                                yield f"data: {json.dumps({'type': 'step', 'step': step_obj})}\n\n"
+                            elif t == "token":
+                                yield f"data: {json.dumps({'type': 'token', 'token': evt.get('token')})}\n\n"
+                            elif t == "final":
+                                final_msg = evt.get("text", "")
+                                conv["messages"].append({"role": "assistant", "content": final_msg, "steps": steps, "edits": []})
+                                conv["updated"] = time.time()
+                                save_conv(cid, conv)
+                                yield f"data: {json.dumps({'type': 'done', 'message': final_msg, 'steps': steps, 'edits': [], 'conversation_id': cid})}\n\n"
+                                return
+            except Exception as e:
+                error_msg = f"Error communicating with Source Agent: {e}"
+                yield f"data: {json.dumps({'type': 'done', 'message': error_msg, 'steps': [], 'edits': [], 'conversation_id': cid})}\n\n"
+                return
+
+            # Always return at the end of the Source Agent block
+            yield f"data: {json.dumps({'type': 'done', 'message': final_msg, 'steps': steps, 'edits': [], 'conversation_id': cid})}\n\n"
             return
+
+        if not model:
+            error_msg = "Ollama is not connected. Start it (ollama serve) and pull a model."
+            conv["messages"].append({"role": "user", "content": body.instruction})
+            conv["messages"].append({"role": "assistant", "content": error_msg, "steps": []})
+            conv["updated"] = time.time()
+            save_conv(cid, conv)
+            yield f"data: {json.dumps({'type': 'done', 'message': error_msg, 'steps': [], 'edits': [], 'conversation_id': cid})}\n\n"
+            return
+
+        conv["messages"].append({"role": "user", "content": body.instruction})
+        yield f"data: {json.dumps({'type': 'start', 'conversation_id': cid})}\n\n"
 
         tree_txt = "\n".join(_full_tree())
         messages = [{"role": "system", "content": AGENT_SYSTEM.format(tree=tree_txt[:9000])}]
-        for h in body.history[-8:]:
+        for h in body.history[-20:]:
             messages.append({"role": h.get("role", "user"), "content": str(h.get("content", ""))[:4000]})
         messages.append({"role": "user", "content": body.instruction})
 
         steps = []
-        for _round in range(6):
-            # Stream from Ollama
+        for _round in range(100):
             yield f"data: {json.dumps({'type': 'status', 'status': 'thinking'})}\n\n"
             full = ""
-            try:
-                with httpx.stream(
-                    "POST", f"{OLLAMA_URL}/api/chat",
-                    json={"model": model, "messages": messages, "stream": True,
-                          "options": {"num_predict": 3500}},
-                    timeout=300.0
-                ) as resp:
-                    resp.raise_for_status()
-                    for line in resp.iter_lines():
-                        if not line:
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                        except ValueError:
-                            continue
-                        token = chunk.get("message", {}).get("content", "")
-                        if token:
-                            full += token
-                            yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
-                        if chunk.get("done"):
-                            break
-            except Exception:
-                yield f"data: {json.dumps({'type': 'done', 'message': 'The model did not respond.', 'steps': steps, 'edits': []})}\n\n"
-                return
-
-            if not full:
-                yield f"data: {json.dumps({'type': 'done', 'message': 'The model did not respond.', 'steps': steps, 'edits': []})}\n\n"
+            for attempt in range(5):
+                try:
+                    if full:
+                        yield f"data: {json.dumps({'type': 'clear'})}\n\n"
+                        full = ""
+                    with httpx.stream(
+                        "POST", f"{OLLAMA_URL}/api/chat",
+                        json={"model": model, "messages": messages, "stream": True,
+                              "options": {"num_predict": 3500}},
+                        timeout=120.0
+                    ) as resp:
+                        resp.raise_for_status()
+                        for line in resp.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                            except ValueError:
+                                continue
+                            token = chunk.get("message", {}).get("content", "")
+                            if token:
+                                full += token
+                                yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+                            if chunk.get("done"):
+                                break
+                    if full:
+                        break
+                except Exception as e:
+                    print(f"Ollama stream attempt {attempt+1} failed: {e}")
+                    if attempt < 4:
+                        time.sleep(0.5 * (attempt + 1))
+            else:
+                msg = "The model did not respond."
+                conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+                conv["updated"] = time.time()
+                save_conv(cid, conv)
+                yield f"data: {json.dumps({'type': 'done', 'message': msg, 'steps': steps, 'edits': [], 'conversation_id': cid})}\n\n"
                 return
 
             obj = _parse(full)
             if not obj or "action" not in obj:
-                # Plain text answer — send as done
-                yield f"data: {json.dumps({'type': 'done', 'message': full.strip(), 'steps': steps, 'edits': []})}\n\n"
+                msg = full.strip()
+                conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+                conv["updated"] = time.time()
+                save_conv(cid, conv)
+                yield f"data: {json.dumps({'type': 'done', 'message': msg, 'steps': steps, 'edits': [], 'conversation_id': cid})}\n\n"
                 return
 
             if obj["action"] == "read":
@@ -649,7 +933,6 @@ async def agent_stream(body: AgentIn):
                 yield f"data: {json.dumps({'type': 'step', 'step': steps[-1]})}\n\n"
                 messages.append({"role": "assistant", "content": full})
                 messages.append({"role": "user", "content": f"Contents of {rel}:\n\n{content}"})
-                # Clear streamed text for the next round
                 yield f"data: {json.dumps({'type': 'clear'})}\n\n"
                 continue
 
@@ -694,13 +977,30 @@ async def agent_stream(body: AgentIn):
 
             if obj["action"] == "finish":
                 result = _resolve_edits(full, steps)
-                yield f"data: {json.dumps({'type': 'done', **result})}\n\n"
+                
+                final_message = result.get("message", "")
+                edits = result.get("edits", [])
+                conv["messages"].append({"role": "assistant", "content": final_message, "steps": steps, "edits": edits})
+                conv["updated"] = time.time()
+                if conv.get("title") in (None, "", "New conversation"):
+                    conv["title"] = body.instruction[:60]
+                save_conv(cid, conv)
+                
+                yield f"data: {json.dumps({'type': 'done', 'conversation_id': cid, **result})}\n\n"
                 return
 
-            yield f"data: {json.dumps({'type': 'done', 'message': full.strip(), 'steps': steps, 'edits': []})}\n\n"
+            msg = full.strip()
+            conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+            conv["updated"] = time.time()
+            save_conv(cid, conv)
+            yield f"data: {json.dumps({'type': 'done', 'message': msg, 'steps': steps, 'edits': [], 'conversation_id': cid})}\n\n"
             return
 
-        yield f"data: {json.dumps({'type': 'done', 'message': 'Reached step limit.', 'steps': steps, 'edits': []})}\n\n"
+        msg = "Reached step limit."
+        conv["messages"].append({"role": "assistant", "content": msg, "steps": steps})
+        conv["updated"] = time.time()
+        save_conv(cid, conv)
+        yield f"data: {json.dumps({'type': 'done', 'message': msg, 'steps': steps, 'edits': [], 'conversation_id': cid})}\n\n"
 
     return StreamingResponse(_generate(), media_type="text/event-stream")
 

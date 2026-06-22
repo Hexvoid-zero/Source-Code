@@ -16,6 +16,7 @@ Remove-Item -Recurse -Force build, dist, SourceCodeIDE.spec -ErrorAction Silentl
 # --onedir starts instantly (no per-launch unpacking); the app lives in dist\SourceCodeIDE\
 .\.venv-build\Scripts\python.exe -m PyInstaller --noconfirm --onedir --windowed --optimize 2 --name SourceCodeIDE `
   --icon SourceCodeIDE.ico `
+  --exclude-module tkinter --exclude-module _tkinter --exclude-module pymsgbox --exclude-module mouseinfo --exclude-module PIL.ImageTk `
   --add-data "static;static" --collect-submodules uvicorn `
   --collect-all webview --collect-all clr_loader --collect-all pythonnet --hidden-import clr `
   --paths backend backend\launcher.py
